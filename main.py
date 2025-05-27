@@ -693,10 +693,13 @@ def main():
     application.add_error_handler(error_handler)
     
     # Set commands
-    application.job_queue.run_once(
-        lambda context: asyncio.create_task(set_bot_commands(application)), 
-        when=1
-    )
+    if application.job_queue:
+        application.job_queue.run_once(
+            lambda context: asyncio.create_task(set_bot_commands(application)), 
+            when=1
+        )
+    else:
+        logger.warning("JobQueue is not available. Bot commands setup skipped.")
     
     # Start bot
     logger.info("Starting Telegram Video Downloader Bot...")
