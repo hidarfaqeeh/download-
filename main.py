@@ -12,6 +12,7 @@ from datetime import datetime
 import json
 import subprocess
 import sys
+from large_file_handler import LargeFileHandler
 
 # إعداد التسجيل
 logging.basicConfig(
@@ -32,42 +33,29 @@ class VideoDownloaderBot:
         os.makedirs(self.downloads_dir, exist_ok=True)
         os.makedirs(self.sessions_dir, exist_ok=True)
         
+        # معالج الملفات الكبيرة
+        self.large_file_handler = LargeFileHandler()
+        
         # تحديث yt-dlp عند البداية
         self.update_ytdlp()
         
         # إحصائيات البوت
         self.stats = self.load_stats()
         
-        # رسائل الانتظار المرحة
-        self.waiting_messages = [
-            "🎬 جاري تحضير الفيديو... اصبر شوية!",
-            "⚡ البوت يعمل بسرعة البرق!",
-            "🚀 تحميل سريع قادم...",
-            "🎯 نحن نعمل على طلبك الآن!",
-            "💫 سحر التكنولوجيا في العمل..."
-        ]
-        
         self.setup_handlers()
 
     def safe_format_number(self, number):
         """تنسيق آمن للأرقام"""
         if number is None:
-            return "0"
-        try:
-            if isinstance(number, (int, float)):
-                return f"{int(number):,}"
-            return str(number)
-        except (ValueError, TypeError):
             return "غير معروف"
-
-    def safe_get_duration(self, duration):
-        """الحصول الآمن على مدة الفيديو"""
         try:
-            if duration is None:
-                return 0
-            return int(float(duration))
-        except (ValueError, TypeError):
-            return 0
+            if isinstance(number, float):
+                number = int(number)
+            elif isinstance(number, str):
+                number = int(float(number))
+            return f"{number:,}"
+        except (ValueError, TypeError, OverflowError):
+            return "غير معروف"
 
     def update_ytdlp(self):
         """تحديث yt-dlp لآخر إصدار"""
@@ -84,7 +72,6 @@ class VideoDownloaderBot:
         try:
             with open(self.stats_file, 'r', encoding='utf-8') as f:
                 stats = json.load(f)
-                # تحويل قائمة المستخدمين إلى set
                 if isinstance(stats.get('users'), list):
                     stats['users'] = set(stats['users'])
                 return stats
@@ -108,46 +95,42 @@ class VideoDownloaderBot:
 
     def detect_platform(self, url):
         """تحديد نوع المنصة من الرابط - محسن"""
-        try:
-            url_lower = url.lower()
-            domain = urlparse(url).netloc.lower()
-            
-            # يوتيوب
-            if any(x in domain for x in ['youtube.com', 'youtu.be', 'm.youtube.com']):
-                return 'youtube'
-            
-            # تويتر/X
-            elif any(x in domain for x in ['twitter.com', 'x.com', 't.co', 'mobile.twitter.com']):
-                return 'twitter'
-            
-            # تيك توك
-            elif any(x in domain for x in ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com']):
-                return 'tiktok'
-            
-            # إنستقرام
-            elif any(x in domain for x in ['instagram.com', 'instagr.am']):
-                return 'instagram'
-            
-            # فيسبوك
-            elif any(x in domain for x in ['facebook.com', 'fb.watch', 'm.facebook.com']):
-                return 'facebook'
-            
-            # منصات أخرى مدعومة
-            elif any(x in domain for x in ['dailymotion.com', 'vimeo.com', 'twitch.tv', 'reddit.com']):
-                return 'other'
-            
-            else:
-                return 'unknown'
-        except Exception:
+        url_lower = url.lower()
+        domain = urlparse(url).netloc.lower()
+        
+        # يوتيوب
+        if any(x in domain for x in ['youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com']):
+            return 'youtube'
+        
+        # تويتر/X
+        elif any(x in domain for x in ['twitter.com', 'x.com', 't.co', 'mobile.twitter.com']):
+            return 'twitter'
+        
+        # تيك توك
+        elif any(x in domain for x in ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com', 'm.tiktok.com']):
+            return 'tiktok'
+        
+        # إنستقرام - تحسين التعرف
+        elif any(x in domain for x in ['instagram.com', 'instagr.am', 'www.instagram.com']):
+            return 'instagram'
+        
+        # فيسبوك - تحسين التعرف
+        elif any(x in domain for x in ['facebook.com', 'fb.watch', 'm.facebook.com', 'www.facebook.com', 'fb.com']):
+            return 'facebook'
+        
+        # منصات أخرى مدعومة
+        elif any(x in domain for x in ['dailymotion.com', 'vimeo.com', 'twitch.tv', 'reddit.com']):
+            return 'other'
+        
+        else:
             return 'unknown'
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """أمر البداية"""
-        try:
-            user = update.effective_user
-            self.stats["users"].add(user.id)
-            
-            welcome_text = f"""
+        user = update.effective_user
+        self.stats["users"].add(user.id)
+        
+        welcome_text = f"""
 🎬 مرحباً {user.first_name}! 
 
 أنا بوت تحميل الفيديوهات السريع والذكي! 🚀
@@ -160,33 +143,31 @@ class VideoDownloaderBot:
 • فيسبوك 👥 (فيديوهات عامة)
 • منصات أخرى 🌐 (Vimeo, Dailymotion...)
 
+🎯 **مميزات جديدة:**
+• تحميل ملفات حتى 2 جيجابايت! 🔥
+• تقسيم الملفات الكبيرة تلقائياً
+• ضغط ذكي للفيديوهات
+• شريط تقدم محسن
+
 📋 **كيفية الاستخدام:**
 فقط أرسل لي رابط الفيديو وسأتولى الباقي!
-
-🎯 **مميزات خاصة:**
-• تحميل سريع بدون تجميد
-• جودات متعددة (4K, HD, SD)
-• تحويل إلى MP3 عالي الجودة
-• إزالة العلامات المائية
-• دعم الروابط المختصرة
-            """
-            
-            keyboard = [
-                [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")],
-                [InlineKeyboardButton("ℹ️ المساعدة", callback_data="help"),
-                 InlineKeyboardButton("🔗 شارك البوت", callback_data="share")],
-                [InlineKeyboardButton("🧪 اختبار الروابط", callback_data="test_links")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(welcome_text, reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"خطأ في أمر البداية: {e}")
-            await update.message.reply_text("❌ حدث خطأ! جرب مرة أخرى.")
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")],
+            [InlineKeyboardButton("ℹ️ المساعدة", callback_data="help"),
+             InlineKeyboardButton("🔗 شارك البوت", callback_data="share")],
+            [InlineKeyboardButton("🧪 اختبار الروابط", callback_data="test_links")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
     async def get_video_info(self, url):
-        """الحصول على معلومات الفيديو - محسن ومحمي من الأخطاء"""
-        # إعدادات محسنة لـ yt-dlp
+        """الحصول على معلومات الفيديو - محسن مع دعم أفضل للإنستقرام والفيسبوك"""
+        platform = self.detect_platform(url)
+        
+        # إعدادات أساسية محسنة
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -197,8 +178,8 @@ class VideoDownloaderBot:
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'referer': 'https://www.google.com/',
             'headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate',
                 'DNT': '1',
                 'Connection': 'keep-alive',
@@ -206,26 +187,73 @@ class VideoDownloaderBot:
             }
         }
         
+        # إعدادات خاصة محسنة لكل منصة
+        if platform == 'instagram':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Referer': 'https://www.instagram.com/',
+                    'Origin': 'https://www.instagram.com',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Cache-Control': 'max-age=0'
+                },
+                'cookiefile': None,
+                'extract_flat': False,
+            })
+            
+        elif platform == 'facebook':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.facebook.com/',
+                    'Origin': 'https://www.facebook.com',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Cache-Control': 'max-age=0'
+                },
+                'cookiefile': None,
+            })
+            
+        elif platform == 'tiktok':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Referer': 'https://www.tiktok.com/',
+                    'Origin': 'https://www.tiktok.com',
+                }
+            })
+            
+        elif platform == 'twitter':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://twitter.com/',
+                }
+            })
+        
         try:
-            platform = self.detect_platform(url)
-            logger.info(f"🔍 محاولة استخراج معلومات من {platform}: {url}")
-            
-            # إعدادات خاصة حسب المنصة
-            if platform == 'tiktok':
-                ydl_opts.update({
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    }
-                })
-            elif platform == 'instagram':
-                ydl_opts.update({
-                    'http_headers': {
-                        'User-Agent': 'Instagram 76.0.0.15.395 Android (24/7.0; 640dpi; 1440x2560; samsung; SM-G930F; herolte; samsungexynos8890; en_US; 138226743)'
-                    }
-                })
-            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"🔍 محاولة استخراج معلومات من {platform}: {url}")
                 info = ydl.extract_info(url, download=False)
                 
                 if not info:
@@ -234,26 +262,19 @@ class VideoDownloaderBot:
                 
                 logger.info(f"✅ تم استخراج المعلومات: {info.get('title', 'بدون عنوان')}")
                 
-                # استخراج المعلومات بشكل آمن
-                title = info.get('title', 'غير معروف') or 'غير معروف'
-                duration = self.safe_get_duration(info.get('duration'))
-                uploader = info.get('uploader', 'غير معروف') or 'غير معروف'
-                view_count = info.get('view_count') or 0
-                description = info.get('description', '') or ''
-                
                 return {
-                    'title': str(title)[:100],  # تحديد طول العنوان
-                    'duration': duration,
+                    'title': info.get('title', 'غير معروف'),
+                    'duration': info.get('duration', 0),
                     'thumbnail': info.get('thumbnail'),
-                    'uploader': str(uploader)[:50],  # تحديد طول اسم القناة
-                    'view_count': view_count,
+                    'uploader': info.get('uploader', 'غير معروف'),
+                    'view_count': info.get('view_count', 0),
                     'formats': info.get('formats', []),
                     'webpage_url': info.get('webpage_url', url),
-                    'description': str(description)[:200] + '...' if len(str(description)) > 200 else str(description)
+                    'description': info.get('description', '')[:200] + '...' if info.get('description') else ''
                 }
                 
         except Exception as e:
-            logger.error(f"❌ خطأ في استخراج المعلومات: {e}")
+            logger.error(f"❌ خطأ في استخراج المعلومات من {platform}: {e}")
             
             # محاولة ثانية مع إعدادات مبسطة
             try:
@@ -262,7 +283,8 @@ class VideoDownloaderBot:
                     'no_warnings': True,
                     'extract_flat': True,
                     'skip_download': True,
-                    'socket_timeout': 15
+                    'socket_timeout': 15,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
                 
                 with yt_dlp.YoutubeDL(simple_opts) as ydl:
@@ -284,59 +306,87 @@ class VideoDownloaderBot:
             return None
 
     async def handle_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة الروابط المرسلة - محسن ومحمي من الأخطاء"""
-        try:
-            url = update.message.text.strip()
-            user_id = update.effective_user.id
-            
-            # تنظيف الرابط
-            url = self.clean_url(url)
-            
-            # التحقق من صحة الرابط
-            if not self.is_valid_url(url):
-                await update.message.reply_text(
-                    "❌ الرابط غير صحيح!\n\n"
-                    "💡 **أمثلة على روابط صحيحة:**\n"
-                    "• https://youtube.com/watch?v=...\n"
-                    "• https://twitter.com/user/status/...\n"
-                    "• https://tiktok.com/@user/video/...\n"
-                    "• https://instagram.com/p/..."
-                )
-                return
-            
-            platform = self.detect_platform(url)
-            if platform == 'unknown':
-                await update.message.reply_text(
-                    "❌ المنصة غير مدعومة حالياً!\n\n"
-                    "🌐 **المنصات المدعومة:**\n"
-                    "• YouTube\n• Twitter/X\n• TikTok\n• Instagram\n• Facebook\n• Vimeo\n• Dailymotion"
-                )
-                return
-            
-            # رسالة انتظار
-            waiting_msg = await update.message.reply_text(
-                f"🔍 جاري تحليل الرابط من {platform.title()}...\n"
-                "⏳ قد يستغرق هذا بضع ثوانٍ..."
+        """معالجة الروابط المرسلة - محسن"""
+        url = update.message.text.strip()
+        user_id = update.effective_user.id
+        
+        # تنظيف الرابط
+        url = self.clean_url(url)
+        
+        # التحقق من صحة الرابط
+        if not self.is_valid_url(url):
+            await update.message.reply_text(
+                "❌ الرابط غير صحيح!\n\n"
+                "💡 **أمثلة على روابط صحيحة:**\n"
+                "• https://youtube.com/watch?v=...\n"
+                "• https://twitter.com/user/status/...\n"
+                "• https://tiktok.com/@user/video/...\n"
+                "• https://instagram.com/p/...\n"
+                "• https://facebook.com/watch?v=..."
             )
-            
-            # الحصول على معلومات الفيديو
+            return
+        
+        platform = self.detect_platform(url)
+        if platform == 'unknown':
+            await update.message.reply_text(
+                "❌ المنصة غير مدعومة حالياً!\n\n"
+                "🌐 **المنصات المدعومة:**\n"
+                "• YouTube\n• Twitter/X\n• TikTok\n• Instagram\n• Facebook\n• Vimeo\n• Dailymotion"
+            )
+            return
+        
+        # رسالة انتظار
+        waiting_msg = await update.message.reply_text(
+            f"🔍 جاري تحليل الرابط من {platform.title()}...\n"
+            "⏳ قد يستغرق هذا بضع ثوانٍ..."
+        )
+        
+        # الحصول على معلومات الفيديو
+        try:
             video_info = await self.get_video_info(url)
             
             if not video_info:
-                await waiting_msg.edit_text(
-                    "❌ فشل في تحليل الرابط!\n\n"
-                    "🔧 **حلول مقترحة:**\n"
-                    "• تأكد من أن الرابط يعمل في المتصفح\n"
-                    "• جرب نسخ الرابط مرة أخرى\n"
-                    "• تأكد من أن الفيديو عام وليس خاص\n"
-                    "• جرب رابط مختلف من نفس المنصة"
-                )
+                error_msg = f"""
+❌ فشل في تحليل الرابط من {platform.title()}!
+
+🔧 **حلول مقترحة:**
+• تأكد من أن الرابط يعمل في المتصفح
+• جرب نسخ الرابط مرة أخرى
+• تأكد من أن الفيديو عام وليس خاص
+"""
+                if platform in ['instagram', 'facebook']:
+                    error_msg += f"""
+📱 **نصائح خاصة بـ {platform.title()}:**
+• تأكد من أن الحساب عام
+• جرب فتح الرابط في متصفح خفي
+• تأكد من عدم انتهاء صلاحية الرابط
+"""
+                
+                await waiting_msg.edit_text(error_msg)
                 return
             
-            # عرض معاينة الفيديو بشكل آمن
-            view_count_str = self.safe_format_number(video_info.get('view_count', 0))
-            duration_str = self.format_duration(video_info.get('duration', 0))
+            # فحص حجم الملف
+            file_info = await self.large_file_handler.check_file_size(url)
+            size_info = ""
+            if file_info and file_info['size_mb'] > 0:
+                size_mb = file_info['size_mb']
+                if size_mb > 1024:
+                    size_info = f"📁 **الحجم:** {size_mb/1024:.1f} جيجا"
+                else:
+                    size_info = f"📁 **الحجم:** {size_mb:.0f} ميجا"
             
+            # عرض معاينة الفيديو
+            view_count = video_info.get('view_count', 0)
+            if view_count is None:
+                view_count = 0
+
+            try:
+                view_count_str = f"{int(view_count):,}"
+            except (ValueError, TypeError):
+                view_count_str = "غير معروف"
+
+            duration_str = self.format_duration(video_info.get('duration', 0))
+
             preview_text = f"""
 🎬 **{video_info['title']}**
 
@@ -344,164 +394,254 @@ class VideoDownloaderBot:
 ⏱️ **المدة:** {duration_str}
 👀 **المشاهدات:** {view_count_str}
 🌐 **المنصة:** {platform.title()}
+{size_info}
 
 📝 **الوصف:** {video_info['description']}
-            """
+"""
             
-            # أزرار الخيارات
+            # أزرار الخيارات مع دعم الملفات الكبيرة
             keyboard = [
                 [InlineKeyboardButton("🎬 فيديو عالي الجودة", callback_data=f"download_video_high_{user_id}")],
                 [InlineKeyboardButton("📱 فيديو جودة متوسطة", callback_data=f"download_video_medium_{user_id}")],
                 [InlineKeyboardButton("🎵 صوت MP3", callback_data=f"download_audio_{user_id}")],
+            ]
+            
+            # إضافة خيارات للملفات الكبيرة
+            if file_info and file_info['size_mb'] > 50:
+                keyboard.append([InlineKeyboardButton("🗜️ ضغط وتحميل", callback_data=f"compress_auto_{user_id}")])
+                keyboard.append([InlineKeyboardButton("✂️ تقسيم وتحميل", callback_data=f"split_auto_{user_id}")])
+            
+            keyboard.extend([
                 [InlineKeyboardButton("ℹ️ معلومات تفصيلية", callback_data=f"info_{user_id}"),
                  InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
-            ]
+            ])
+            
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             # حفظ معلومات الفيديو في السياق
             context.user_data[f'video_info_{user_id}'] = {
                 'url': url,
                 'info': video_info,
-                'platform': platform
+                'platform': platform,
+                'file_info': file_info
             }
             
             await waiting_msg.edit_text(preview_text, reply_markup=reply_markup)
             
         except Exception as e:
             logger.error(f"خطأ في معالجة الرابط: {e}")
-            try:
-                await update.message.reply_text(
-                    f"❌ حدث خطأ أثناء معالجة الرابط!\n\n"
-                    f"🔍 **نوع الخطأ:** {type(e).__name__}\n"
-                    "🔄 جرب مرة أخرى أو استخدم رابط مختلف"
-                )
-            except:
-                pass
+            await waiting_msg.edit_text(
+                f"❌ حدث خطأ أثناء معالجة الرابط!\n\n"
+                f"🔍 **تفاصيل الخطأ:** {str(e)[:100]}...\n\n"
+                "🔄 جرب مرة أخرى أو استخدم رابط مختلف"
+            )
 
     def clean_url(self, url):
         """تنظيف الرابط من المعاملات غير الضرورية"""
-        try:
-            # إزالة المسافات
-            url = url.strip()
-            
-            # إزالة معاملات التتبع الشائعة
-            tracking_params = ['utm_source', 'utm_medium', 'utm_campaign', 'fbclid', 'gclid']
-            
-            for param in tracking_params:
-                if param in url:
-                    url = re.sub(f'[?&]{param}=[^&]*', '', url)
-            
-            return url
-        except:
-            return url
+        url = url.strip()
+        
+        # إزالة معاملات التتبع الشائعة
+        tracking_params = ['utm_source', 'utm_medium', 'utm_campaign', 'fbclid', 'gclid', 'igshid']
+        
+        for param in tracking_params:
+            if param in url:
+                url = re.sub(f'[?&]{param}=[^&]*', '', url)
+        
+        return url
 
     def is_valid_url(self, url):
         """التحقق من صحة الرابط"""
-        try:
-            url_pattern = re.compile(
-                r'^https?://'  # http:// or https://
-                r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-                r'localhost|'  # localhost...
-                r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-                r'(?::\d+)?'  # optional port
-                r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-            return url_pattern.match(url) is not None
-        except:
-            return False
+        url_pattern = re.compile(
+            r'^https?://'
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+            r'localhost|'
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+            r'(?::\d+)?'
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return url_pattern.match(url) is not None
 
     def format_duration(self, seconds):
-        """تنسيق مدة الفيديو بشكل آمن"""
-        try:
-            if not seconds or seconds == 0:
-                return "غير معروف"
-            
-            seconds = int(float(seconds))
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            seconds = seconds % 60
-            
-            if hours > 0:
-                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            else:
-                return f"{minutes:02d}:{seconds:02d}"
-        except:
+        """تنسيق مدة الفيديو"""
+        if not seconds:
             return "غير معروف"
+        
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+        
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{minutes:02d}:{seconds:02d}"
 
     async def download_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالجة أزرار التحميل - محسن"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        user_id = update.effective_user.id
+        
+        if data == "cancel":
+            await query.edit_message_text("❌ تم إلغاء العملية.")
+            return
+        
+        if data == "stats":
+            await self.show_stats(query)
+            return
+        
+        if data == "help":
+            await self.show_help(query)
+            return
+        
+        if data == "share":
+            await self.show_share(query)
+            return
+        
+        if data == "test_links":
+            await self.show_test_links(query)
+            return
+        
+        if data == "back_to_main":
+            await self.show_main_menu(query)
+            return
+        
+        if data.startswith("info_"):
+            await self.show_detailed_info(query, context, user_id)
+            return
+        
+        # معالجة خيارات الملفات الكبيرة
+        if data.startswith("compress_"):
+            quality = data.split("_")[1]
+            if quality in ["720", "480"]:
+                await self.large_file_handler.handle_compression_callback(query, context, quality)
+            elif quality == "auto":
+                await self.handle_auto_compress(query, context, user_id)
+            return
+        
+        if data.startswith("split_"):
+            await self.handle_split_download(query, context, user_id)
+            return
+        
+        if data.startswith("audio_only_"):
+            await self.handle_audio_only(query, context, user_id)
+            return
+        
+        # معالجة التحميل العادي
+        if data.startswith("download_"):
+            await self.process_download(query, context, data, user_id)
+
+    async def handle_auto_compress(self, query, context, user_id):
+        """معالجة الضغط التلقائي"""
+        video_data = context.user_data.get(f'video_info_{user_id}')
+        
+        if not video_data:
+            await query.edit_message_text("❌ انتهت صلاحية الجلسة!")
+            return
+        
+        url = video_data['url']
+        video_info = video_data['info']
+        
+        await self.large_file_handler.download_with_monitoring(query, url, video_info)
+
+    async def handle_split_download(self, query, context, user_id):
+        """معالجة التحميل مع التقسيم"""
+        video_data = context.user_data.get(f'video_info_{user_id}')
+        
+        if not video_data:
+            await query.edit_message_text("❌ انتهت صلاحية الجلسة!")
+            return
+        
+        url = video_data['url']
+        video_info = video_data['info']
+        
+        # إجبار التقسيم
+        await self.large_file_handler.handle_large_file(query, context, url, video_info)
+
+    async def handle_audio_only(self, query, context, user_id):
+        """معالجة تحميل الصوت فقط"""
+        video_data = context.user_data.get(f'video_info_{user_id}')
+        
+        if not video_data:
+            await query.edit_message_text("❌ انتهت صلاحية الجلسة!")
+            return
+        
+        url = video_data['url']
+        video_info = video_data['info']
+        
+        progress_msg = await query.edit_message_text("🎵 جاري تحميل الصوت...")
+        
+        timestamp = int(datetime.now().timestamp())
+        filename = f'downloads/audio_{user_id}_{timestamp}.%(ext)s'
+        
+        ydl_opts = {
+            'outtmpl': filename,
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'progress_hooks': [lambda d: asyncio.create_task(self.large_file_handler.enhanced_progress_hook(d, progress_msg))],
+        }
+        
         try:
-            query = update.callback_query
-            await query.answer()
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
             
-            data = query.data
-            user_id = update.effective_user.id
+            # البحث عن الملف
+            download_dir = 'downloads'
+            files = [f for f in os.listdir(download_dir) if f.startswith(f'audio_{user_id}_{timestamp}')]
             
-            if data == "cancel":
-                await query.edit_message_text("❌ تم إلغاء العملية.")
-                return
-            
-            if data == "stats":
-                await self.show_stats(query)
-                return
-            
-            if data == "help":
-                await self.show_help(query)
-                return
-            
-            if data == "share":
-                await self.show_share(query)
-                return
-            
-            if data == "test_links":
-                await self.show_test_links(query)
-                return
-            
-            if data == "back_to_main":
-                await self.show_main_menu(query)
-                return
-            
-            if data.startswith("info_"):
-                await self.show_detailed_info(query, context, user_id)
-                return
-            
-            # معالجة التحميل
-            if data.startswith("download_"):
-                await self.process_download(query, context, data, user_id)
+            if files:
+                file_path = os.path.join(download_dir, files[0])
+                await self.large_file_handler.send_normal_file(query, file_path, video_info, progress_msg)
+                
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            else:
+                await progress_msg.edit_text("❌ فشل في تحميل الصوت!")
                 
         except Exception as e:
-            logger.error(f"خطأ في معالجة الأزرار: {e}")
-            try:
-                await query.edit_message_text("❌ حدث خطأ! جرب مرة أخرى.")
-            except:
-                pass
+            await progress_msg.edit_text(f"❌ فشل التحميل: {str(e)[:100]}...")
 
     async def process_download(self, query, context, data, user_id):
-        """معالجة عملية التحميل - محسن ومحمي"""
+        """معالجة عملية التحميل - محسن مع إصلاح مشكلة الملفات الكبيرة"""
+        video_data = context.user_data.get(f'video_info_{user_id}')
+        
+        if not video_data:
+            await query.edit_message_text("❌ انتهت صلاحية الجلسة! أرسل الرابط مرة أخرى.")
+            return
+        
+        url = video_data['url']
+        video_info = video_data['info']
+        platform = video_data['platform']
+        file_info = video_data.get('file_info')
+        
+        # تحديث الإحصائيات
+        self.stats["total_downloads"] += 1
+        if platform in self.stats["platforms"]:
+            self.stats["platforms"][platform] += 1
+        else:
+            self.stats["platforms"]["other"] += 1
+        self.save_stats()
+        
+        # رسالة التحميل
+        progress_msg = await query.edit_message_text(
+            f"🚀 بدء التحميل من {platform.title()}...\n"
+            "⏳ قد يستغرق هذا بضع دقائق..."
+        )
+        
         try:
-            video_data = context.user_data.get(f'video_info_{user_id}')
-            
-            if not video_data:
-                await query.edit_message_text("❌ انتهت صلاحية الجلسة! أرسل الرابط مرة أخرى.")
+            # فحص إذا كان الملف كبير وتوجيه للمعالج المناسب
+            if file_info and file_info['size_mb'] > 50:
+                logger.info(f"ملف كبير تم اكتشافه: {file_info['size_mb']} ميجا")
+                await self.large_file_handler.handle_large_file(query, context, url, video_info)
                 return
             
-            url = video_data['url']
-            video_info = video_data['info']
-            platform = video_data['platform']
-            
-            # تحديث الإحصائيات
-            self.stats["total_downloads"] += 1
-            if platform in self.stats["platforms"]:
-                self.stats["platforms"][platform] += 1
-            else:
-                self.stats["platforms"]["other"] += 1
-            self.save_stats()
-            
-            # رسالة التحميل
-            progress_msg = await query.edit_message_text(
-                f"🚀 بدء التحميل من {platform.title()}...\n"
-                "⏳ قد يستغرق هذا بضع دقائق..."
-            )
-            
+            # التحميل العادي للملفات الصغيرة
             if "audio" in data:
                 file_path = await self.download_audio(url, video_info, progress_msg, platform)
             else:
@@ -509,7 +649,18 @@ class VideoDownloaderBot:
                 file_path = await self.download_video(url, video_info, quality, progress_msg, platform)
             
             if file_path and os.path.exists(file_path):
-                await self.send_file(query, file_path, video_info)
+                # فحص حجم الملف المحمل
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                logger.info(f"حجم الملف المحمل: {file_size_mb:.1f} ميجا")
+                
+                if file_size_mb > 50:
+                    # الملف كبير، استخدم معالج الملفات الكبيرة
+                    await progress_msg.edit_text("📤 الملف كبير، جاري التحضير للإرسال...")
+                    await self.large_file_handler.handle_large_file_send(query, file_path, video_info, progress_msg)
+                else:
+                    # الملف صغير، إرسال عادي
+                    await self.send_file(query, file_path, video_info)
+                
                 # حذف الملف بعد الإرسال
                 try:
                     os.remove(file_path)
@@ -526,63 +677,66 @@ class VideoDownloaderBot:
                 
         except Exception as e:
             logger.error(f"خطأ في التحميل: {e}")
-            try:
-                await query.edit_message_text(
-                    f"❌ حدث خطأ أثناء التحميل!\n\n"
-                    f"🔍 **نوع الخطأ:** {type(e).__name__}\n"
-                    "🔄 جرب مرة أخرى"
-                )
-            except:
-                pass
+            await progress_msg.edit_text(
+                f"❌ حدث خطأ أثناء التحميل!\n\n"
+                f"🔍 **تفاصيل:** {str(e)[:100]}...\n"
+                "🔄 جرب مرة أخرى"
+            )
 
     async def download_video(self, url, video_info, quality="medium", progress_msg=None, platform="unknown"):
-        """تحميل الفيديو - محسن ومحمي"""
+        """تحميل الفيديو - محسن"""
+        timestamp = int(datetime.now().timestamp())
+        filename = f"{self.downloads_dir}/video_{platform}_{timestamp}.%(ext)s"
+        
+        # إعدادات محسنة حسب الجودة والمنصة
+        if quality == "high":
+            format_selector = 'best[height<=1080]/best'
+        else:
+            format_selector = 'best[height<=720]/best'
+        
+        ydl_opts = {
+            'outtmpl': filename,
+            'format': format_selector,
+            'merge_output_format': 'mp4',
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'ignoreerrors': True,
+            'no_warnings': True,
+            'extractaudio': False,
+            'audioformat': 'mp3',
+            'embed_subs': False,
+            'writeinfojson': False,
+            'writethumbnail': False,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'referer': 'https://www.google.com/',
+            'socket_timeout': 60,
+            'retries': 3,
+        }
+        
+        if progress_msg:
+            ydl_opts['progress_hooks'] = [lambda d: asyncio.create_task(self.progress_hook(d, progress_msg))]
+        
+        # إعدادات خاصة لكل منصة
+        if platform == 'instagram':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15',
+                }
+            })
+        elif platform == 'facebook':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                }
+            })
+        elif platform == 'tiktok':
+            ydl_opts.update({
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15',
+                }
+            })
+        
         try:
-            timestamp = int(datetime.now().timestamp())
-            filename = f"{self.downloads_dir}/video_{platform}_{timestamp}.%(ext)s"
-            
-            # إعدادات محسنة حسب الجودة والمنصة
-            if quality == "high":
-                format_selector = 'best[height<=1080]/best'
-            else:
-                format_selector = 'best[height<=720]/best'
-            
-            ydl_opts = {
-                'outtmpl': filename,
-                'format': format_selector,
-                'merge_output_format': 'mp4',
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'ignoreerrors': True,
-                'no_warnings': True,
-                'extractaudio': False,
-                'audioformat': 'mp3',
-                'embed_subs': False,
-                'writeinfojson': False,
-                'writethumbnail': False,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'referer': 'https://www.google.com/',
-                'socket_timeout': 60,
-                'retries': 3,
-            }
-            
-            if progress_msg:
-                ydl_opts['progress_hooks'] = [lambda d: asyncio.create_task(self.progress_hook(d, progress_msg))]
-            
-            # إعدادات خاصة لكل منصة
-            if platform == 'tiktok':
-                ydl_opts.update({
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15',
-                    }
-                })
-            elif platform == 'instagram':
-                ydl_opts.update({
-                    'http_headers': {
-                        'User-Agent': 'Instagram 76.0.0.15.395 Android'
-                    }
-                })
-            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
             
@@ -599,30 +753,28 @@ class VideoDownloaderBot:
             logger.error(f"خطأ في تحميل الفيديو: {e}")
             return None
 
-    async def download_audio(self, url, video_info, progress_msg=None, platform="unknown"):
-        """تحميل الصوت - محسن ومحمي"""
+    async def download_audio(self, url, video_info, progress_msg, platform="unknown"):
+        """تحميل الصوت - محسن"""
+        timestamp = int(datetime.now().timestamp())
+        filename = f"{self.downloads_dir}/audio_{platform}_{timestamp}.%(ext)s"
+        
+        ydl_opts = {
+            'outtmpl': filename,
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'ignoreerrors': True,
+            'no_warnings': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'socket_timeout': 60,
+            'retries': 3,
+            'progress_hooks': [lambda d: asyncio.create_task(self.progress_hook(d, progress_msg))],
+        }
+        
         try:
-            timestamp = int(datetime.now().timestamp())
-            filename = f"{self.downloads_dir}/audio_{platform}_{timestamp}.%(ext)s"
-            
-            ydl_opts = {
-                'outtmpl': filename,
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                'ignoreerrors': True,
-                'no_warnings': True,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'socket_timeout': 60,
-                'retries': 3,
-            }
-            
-            if progress_msg:
-                ydl_opts['progress_hooks'] = [lambda d: asyncio.create_task(self.progress_hook(d, progress_msg))]
-            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
             
@@ -640,9 +792,9 @@ class VideoDownloaderBot:
             return None
 
     async def progress_hook(self, d, progress_msg):
-        """تحديث شريط التقدم - محسن ومحمي"""
-        try:
-            if d['status'] == 'downloading':
+        """تحديث شريط التقدم - محسن"""
+        if d['status'] == 'downloading':
+            try:
                 percent = d.get('_percent_str', '0%').strip()
                 speed = d.get('_speed_str', 'غير معروف')
                 downloaded = d.get('downloaded_bytes', 0)
@@ -665,11 +817,11 @@ class VideoDownloaderBot:
                 
                 await progress_msg.edit_text(progress_text)
                 
-        except Exception:
-            pass  # تجاهل أخطاء التحديث
+            except Exception:
+                pass  # تجاهل أخطاء التحديث
 
     async def send_file(self, query, file_path, video_info):
-        """إرسال الملف للمستخدم - محسن ومحمي"""
+        """إرسال الملف للمستخدم - محسن"""
         try:
             file_size = os.path.getsize(file_path) / (1024 * 1024)  # بالميجا
             
@@ -707,53 +859,44 @@ class VideoDownloaderBot:
             
         except Exception as e:
             logger.error(f"خطأ في إرسال الملف: {e}")
-            try:
-                if "too large" in str(e).lower():
-                    await query.edit_message_text(
-                        "❌ الملف كبير جداً للإرسال!\n\n"
-                        "💡 **حلول:**\n"
-                        "• جرب جودة أقل\n"
-                        "• حول إلى MP3 بدلاً من الفيديو"
-                    )
-                else:
-                    await query.edit_message_text(f"❌ فشل في إرسال الملف!")
-            except:
-                pass
+            if "too large" in str(e).lower():
+                await query.edit_message_text("📤 الملف كبير، جاري التقسيم...")
+                await self.large_file_handler.split_and_send_file(query, file_path, video_info, query)
+            else:
+                await query.edit_message_text(f"❌ فشل في إرسال الملف: {str(e)[:100]}...")
 
     async def show_stats(self, query):
-        """عرض الإحصائيات - محسن ومحمي"""
-        try:
-            total_users = len(self.stats['users'])
-            total_downloads = self.stats['total_downloads']
-            
-            stats_text = f"""
+        """عرض الإحصائيات - محسن"""
+        total_users = len(self.stats['users'])
+        total_downloads = self.stats['total_downloads']
+        
+        stats_text = f"""
 📊 **إحصائيات البوت**
 
-👥 **المستخدمون:** {self.safe_format_number(total_users)}
-📥 **إجمالي التحميلات:** {self.safe_format_number(total_downloads)}
+👥 **المستخدمون:** {total_users}
+📥 **إجمالي التحميلات:** {total_downloads}
 
 🌐 **التحميلات حسب المنصة:**
-📺 يوتيوب: {self.safe_format_number(self.stats['platforms'].get('youtube', 0))}
-🐦 تويتر: {self.safe_format_number(self.stats['platforms'].get('twitter', 0))}
-🎵 تيك توك: {self.safe_format_number(self.stats['platforms'].get('tiktok', 0))}
-📸 إنستقرام: {self.safe_format_number(self.stats['platforms'].get('instagram', 0))}
-👥 فيسبوك: {self.safe_format_number(self.stats['platforms'].get('facebook', 0))}
-🌐 أخرى: {self.safe_format_number(self.stats['platforms'].get('other', 0))}
+📺 يوتيوب: {self.stats['platforms'].get('youtube', 0)}
+🐦 تويتر: {self.stats['platforms'].get('twitter', 0)}
+🎵 تيك توك: {self.stats['platforms'].get('tiktok', 0)}
+📸 إنستقرام: {self.stats['platforms'].get('instagram', 0)}
+👥 فيسبوك: {self.stats['platforms'].get('facebook', 0)}
+🌐 أخرى: {self.stats['platforms'].get('other', 0)}
 
 📅 **تاريخ البداية:** {self.stats['start_date'][:10]}
 ⚡ **متوسط التحميل:** {total_downloads/max(total_users,1):.1f} لكل مستخدم
-            """
-            
-            keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(stats_text, reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"خطأ في عرض الإحصائيات: {e}")
-            await query.edit_message_text("❌ خطأ في تحميل الإحصائيات!")
+
+🔥 **جديد:** دعم الملفات حتى 2 جيجابايت!
+        """
+        
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(stats_text, reply_markup=reply_markup)
 
     async def show_help(self, query):
-        """عرض المساعدة"""
+        """عرض المساعدة - محسن"""
         help_text = """
 ℹ️ **دليل الاستخدام الشامل**
 
@@ -776,17 +919,34 @@ class VideoDownloaderBot:
 • **فيديو SD:** جودة متوسطة (720p)
 • **صوت MP3:** صوت فقط (192kbps)
 
+🔥 **مميزات الملفات الكبيرة:**
+• **تحميل حتى 2 جيجابايت**
+• **تقسيم تلقائي** للملفات الكبيرة
+• **ضغط ذكي** لتوفير المساحة
+• **شريط تقدم محسن** مع الوقت المتبقي
+
 💡 **نصائح مهمة:**
 • استخدم روابط مباشرة للفيديوهات
 • تأكد من أن الفيديو عام وليس خاص
 • الجودة العالية تحتاج وقت أكثر
 • MP3 أسرع وأصغر حجماً
+• للملفات الكبيرة: اختر التقسيم أو الضغط
 
 ❓ **حل المشاكل:**
 • إذا فشل التحميل، جرب جودة أقل
 • تأكد من صحة الرابط
 • بعض الفيديوهات قد تكون محمية
 • جرب نسخ الرابط مرة أخرى
+
+🔧 **مشاكل شائعة:**
+• "المنصة غير مدعومة" → تأكد من الرابط
+• "فشل التحليل" → جرب رابط آخر
+• "الملف كبير" → اختر التقسيم أو الضغط
+
+📱 **نصائح للإنستقرام والفيسبوك:**
+• تأكد من أن الحساب/الصفحة عامة
+• جرب فتح الرابط في متصفح خفي
+• انسخ الرابط من المتصفح مباشرة
         """
         
         keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
@@ -795,7 +955,7 @@ class VideoDownloaderBot:
         await query.edit_message_text(help_text, reply_markup=reply_markup)
 
     async def show_share(self, query):
-        """عرض رسالة المشاركة"""
+        """عرض رسالة المشاركة - محسن"""
         share_text = """
 🔗 **شارك البوت مع أصدقائك!**
 
@@ -816,11 +976,13 @@ class VideoDownloaderBot:
 • جودات متعددة (4K, HD, SD)
 • تحويل إلى MP3 عالي الجودة
 • واجهة عربية سهلة الاستخدام
+• **دعم الملفات حتى 2 جيجابايت!** 🔥
 
 🔗 **جربه الآن:** @YourBotUsername
 ---
 
 ❤️ **شكراً لك على المشاركة!**
+كلما زاد عدد المستخدمين، كلما تحسن البوت أكثر!
         """
         
         keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
@@ -829,7 +991,7 @@ class VideoDownloaderBot:
         await query.edit_message_text(share_text, reply_markup=reply_markup)
 
     async def show_test_links(self, query):
-        """عرض روابط اختبار"""
+        """عرض روابط اختبار للمنصات المختلفة"""
         test_text = """
 🧪 **روابط اختبار للمنصات المختلفة:**
 
@@ -845,7 +1007,12 @@ https://www.tiktok.com/@tiktok/video/1234567890
 📸 **إنستقرام:**
 https://www.instagram.com/p/ABC123/
 
+👥 **فيسبوك:**
+https://www.facebook.com/watch?v=1234567890
+
 💡 **نصيحة:** انسخ أي رابط وأرسله لي لاختبار البوت!
+
+🔥 **جديد:** جرب فيديو كبير لاختبار ميزة التقسيم!
         """
         
         keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
@@ -866,6 +1033,8 @@ https://www.instagram.com/p/ABC123/
 • تيك توك 🎵
 • إنستقرام 📸
 • فيسبوك 👥
+
+🔥 **جديد:** دعم الملفات حتى 2 جيجابايت!
         """
         
         keyboard = [
@@ -879,41 +1048,68 @@ https://www.instagram.com/p/ABC123/
         await query.edit_message_text(welcome_text, reply_markup=reply_markup)
 
     async def show_detailed_info(self, query, context, user_id):
-        """عرض معلومات تفصيلية"""
-        try:
-            video_data = context.user_data.get(f'video_info_{user_id}')
-            
-            if not video_data:
-                await query.edit_message_text("❌ انتهت صلاحية الجلسة!")
-                return
-            
-            info = video_data['info']
-            platform = video_data['platform']
-            
-            detailed_text = f"""
+        """عرض معلومات تفصيلية عن الفيديو"""
+        video_data = context.user_data.get(f'video_info_{user_id}')
+        
+        if not video_data:
+            await query.edit_message_text("❌ انتهت صلاحية الجلسة!")
+            return
+        
+        info = video_data['info']
+        platform = video_data['platform']
+        file_info = video_data.get('file_info')
+        
+        view_count = info.get('view_count', 0)
+        if view_count is None:
+            view_count = 0
+        view_count_formatted = self.safe_format_number(view_count)
+
+        detailed_text = f"""
 📋 **معلومات تفصيلية**
 
 🎬 **العنوان:** {info['title']}
 📺 **القناة:** {info['uploader']}
 ⏱️ **المدة:** {self.format_duration(info['duration'])}
-👀 **المشاهدات:** {self.safe_format_number(info.get('view_count', 0))}
+👀 **المشاهدات:** {view_count_formatted}
 🌐 **المنصة:** {platform.title()}
 🔗 **الرابط:** {info['webpage_url']}
+"""
+
+        # إضافة معلومات الحجم إذا كانت متاحة
+        if file_info and file_info['size_mb'] > 0:
+            size_mb = file_info['size_mb']
+            if size_mb > 1024:
+                detailed_text += f"\n📁 **الحجم:** {size_mb/1024:.1f} جيجابايت"
+            else:
+                detailed_text += f"\n📁 **الحجم:** {size_mb:.0f} ميجابايت"
+            
+            if size_mb > 50:
+                detailed_text += "\n⚠️ **ملف كبير:** سيتم تقسيمه أو ضغطه"
+
+        detailed_text += f"""
 
 📝 **الوصف:**
 {info['description']}
-            """
+"""
+        
+        # عرض الجودات المتاحة
+        formats = info.get('formats', [])
+        if formats:
+            qualities = set()
+            for fmt in formats:
+                if fmt.get('height'):
+                    qualities.add(f"{fmt['height']}p")
             
-            keyboard = [
-                [InlineKeyboardButton("📥 تحميل", callback_data=f"download_video_medium_{user_id}")],
-                [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(detailed_text, reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"خطأ في عرض المعلومات التفصيلية: {e}")
-            await query.edit_message_text("❌ خطأ في تحميل المعلومات!")
+            if qualities:
+                detailed_text += "\n🎥 **الجودات المتاحة:**\n• " + "\n• ".join(sorted(qualities, reverse=True))
+        
+        keyboard = [
+            [InlineKeyboardButton("📥 تحميل", callback_data=f"download_video_medium_{user_id}")],
+            [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(detailed_text, reply_markup=reply_markup)
 
     def setup_handlers(self):
         """إعداد معالجات الأوامر"""
@@ -923,7 +1119,7 @@ https://www.instagram.com/p/ABC123/
 
     def run(self):
         """تشغيل البوت"""
-        logger.info("🚀 بدء تشغيل البوت المحسن والمحمي...")
+        logger.info("🚀 بدء تشغيل البوت المحسن مع دعم الملفات الكبيرة...")
         self.app.run_polling()
 
 # تشغيل البوت
