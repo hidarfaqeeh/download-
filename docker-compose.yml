@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: video_downloader_bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_USER_ID=${ADMIN_USER_ID}
+    volumes:
+      - ./downloads:/tmp/telegram_bot
+      - ./logs:/app/logs
+    mem_limit: 2g
+    cpus: 1.0
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
