@@ -49,6 +49,15 @@ class VideoDownloaderBot:
         
         self.setup_handlers()
 
+    def safe_format_number(self, number):
+        """تنسيق آمن للأرقام"""
+        if number is None:
+            return "0"
+        try:
+            return f"{int(number):,}"
+        except (ValueError, TypeError):
+            return "غير معروف"
+
     def update_ytdlp(self):
         """تحديث yt-dlp لآخر إصدار"""
         try:
@@ -303,7 +312,7 @@ class VideoDownloaderBot:
 
 📺 **القناة:** {video_info['uploader']}
 ⏱️ **المدة:** {self.format_duration(video_info['duration'])}
-👀 **المشاهدات:** {video_info.get('view_count', 0):,}
+👀 **المشاهدات:** {video_info.get('view_count', 0) or 0:,}
 🌐 **المنصة:** {platform.title()}
 
 📝 **الوصف:** {video_info['description'][:100]}...
@@ -759,16 +768,16 @@ https://www.instagram.com/p/ABC123/
         stats_text = f"""
 📊 **إحصائيات البوت**
 
-👥 **المستخدمون:** {total_users:,}
-📥 **إجمالي التحميلات:** {total_downloads:,}
+👥 **المستخدمون:** {total_users}
+📥 **إجمالي التحميلات:** {total_downloads}
 
 🌐 **التحميلات حسب المنصة:**
-📺 يوتيوب: {self.stats['platforms'].get('youtube', 0):,}
-🐦 تويتر: {self.stats['platforms'].get('twitter', 0):,}
-🎵 تيك توك: {self.stats['platforms'].get('tiktok', 0):,}
-📸 إنستقرام: {self.stats['platforms'].get('instagram', 0):,}
-👥 فيسبوك: {self.stats['platforms'].get('facebook', 0):,}
-🌐 أخرى: {self.stats['platforms'].get('other', 0):,}
+📺 يوتيوب: {self.stats['platforms'].get('youtube', 0)}
+🐦 تويتر: {self.stats['platforms'].get('twitter', 0)}
+🎵 تيك توك: {self.stats['platforms'].get('tiktok', 0)}
+📸 إنستقرام: {self.stats['platforms'].get('instagram', 0)}
+👥 فيسبوك: {self.stats['platforms'].get('facebook', 0)}
+🌐 أخرى: {self.stats['platforms'].get('other', 0)}
 
 📅 **تاريخ البداية:** {self.stats['start_date'][:10]}
 ⚡ **متوسط التحميل:** {total_downloads/max(total_users,1):.1f} لكل مستخدم
