@@ -6,6 +6,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import yt_dlp
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LargeFileHandler:
     def __init__(self, max_size_mb=2000):  # 2 جيجا
@@ -45,33 +48,61 @@ class LargeFileHandler:
                     'duration': info.get('duration', 0)
                 }
         except Exception as e:
-            print(f"خطأ في فحص حجم الملف: {e}")
+            logger.error(f"خطأ في فحص حجم الملف: {e}")
             return None
 
-    async def handle_large_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE, url, video_info):
-        """معالجة الملفات الكبيرة"""
+    async def handle_large_file(self, update_or_query, context: ContextTypes.DEFAULT_TYPE, url, video_info):
+        """معالجة الملفات الكبيرة - إصلاح المشكلة"""
+        # التحقق من نوع الكائن
+        if hasattr(update_or_query, 'callback_query'):
+            # إذا كان query
+            query = update_or_query
+            user_id = query.from_user.id
+        elif hasattr(update_or_query, 'effective_user'):
+            # إذا كان update
+            update = update_or_query
+            user_id = update.effective_user.id
+        else:
+            # إذا كان query مباشرة
+            query = update_or_query
+            user_id = query.from_user.id
+        
         file_info = await self.check_file_size(url)
         
         if not file_info:
-            await update.message.reply_text("⚠️ لا يمكن تحديد حجم الملف، سأحاول التحميل...")
-            return await self.download_with_monitoring(update, url, video_info)
+            await self.download_with_monitoring(update_or_query, url, video_info)
+            return
         
         size_mb = file_info['size_mb']
         
         if size_mb == 0:
-            await update.message.reply_text("⚠️ حجم الملف غير معروف، سأحاول التحميل...")
-            return await self.download_with_monitoring(update, url, video_info)
+            await self.download_with_monitoring(update_or_query, url, video_info)
+            return
         
         if size_mb > self.max_size_mb:
-            return await self.handle_oversized_file(update, file_info, url, context)
+            await self.handle_oversized_file(update_or_query, file_info, url, context)
         elif size_mb > self.telegram_limit_mb:
-            return await self.handle_large_download(update, file_info, url, video_info, context)
+            await self.handle_large_download(update_or_query, file_info, url, video_info, context)
         else:
-            return await self.download_with_monitoring(update, url, video_info)
+            await self.download_with_monitoring(update_or_query, url, video_info)
 
-    async def handle_oversized_file(self, update, file_info, url, context):
+    async def handle_oversized_file(self, update_or_query, file_info, url, context):
         """معالجة الملفات الأكبر من 2 جيجا"""
         size_gb = file_info['size_mb'] / 1024
+        
+        # التحقق من نوع الكائن
+        if hasattr(update_or_query, 'callback_query'):
+            query = update_or_query
+            user_id = query.from_user.id
+            send_method = query.edit_message_text
+        elif hasattr(update_or_query, 'effective_user'):
+            update = update_or_query
+            user_id = update.effective_user.id
+            send_method = update.message.reply_text
+        else:
+            query = update_or_query
+            user_id = query.from_user.id
+            send_method = query.edit_message_text
         
         message = f"""
 🚫 **الملف كبير جداً!**
@@ -83,25 +114,39 @@ class LargeFileHandler:
         """
         
         keyboard = [
-            [InlineKeyboardButton("📱 جودة متوسطة (720p)", callback_data=f"compress_720_{update.effective_user.id}")],
-            [InlineKeyboardButton("📺 جودة منخفضة (480p)", callback_data=f"compress_480_{update.effective_user.id}")],
-            [InlineKeyboardButton("🎵 صوت فقط (MP3)", callback_data=f"audio_only_{update.effective_user.id}")],
+            [InlineKeyboardButton("📱 جودة متوسطة (720p)", callback_data=f"compress_720_{user_id}")],
+            [InlineKeyboardButton("📺 جودة منخفضة (480p)", callback_data=f"compress_480_{user_id}")],
+            [InlineKeyboardButton("🎵 صوت فقط (MP3)", callback_data=f"audio_only_{user_id}")],
             [InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # حفظ معلومات الملف
-        context.user_data[f'oversized_file_{update.effective_user.id}'] = {
+        context.user_data[f'oversized_file_{user_id}'] = {
             'url': url,
             'file_info': file_info
         }
         
-        await update.message.reply_text(message, reply_markup=reply_markup)
+        await send_method(message, reply_markup=reply_markup)
 
-    async def handle_large_download(self, update, file_info, url, video_info, context):
+    async def handle_large_download(self, update_or_query, file_info, url, video_info, context):
         """معالجة التحميلات الكبيرة (50MB - 2GB)"""
         size_mb = file_info['size_mb']
         estimated_time = size_mb / 10  # تقدير 10 ميجا/ثانية
+        
+        # التحقق من نوع الكائن
+        if hasattr(update_or_query, 'callback_query'):
+            query = update_or_query
+            user_id = query.from_user.id
+            send_method = query.edit_message_text
+        elif hasattr(update_or_query, 'effective_user'):
+            update = update_or_query
+            user_id = update.effective_user.id
+            send_method = update.message.reply_text
+        else:
+            query = update_or_query
+            user_id = query.from_user.id
+            send_method = query.edit_message_text
         
         warning_message = f"""
 ⚠️ **ملف كبير الحجم!**
@@ -114,29 +159,44 @@ class LargeFileHandler:
         """
         
         keyboard = [
-            [InlineKeyboardButton("📤 تقسيم وإرسال", callback_data=f"split_send_{update.effective_user.id}")],
-            [InlineKeyboardButton("🗜️ ضغط وإرسال", callback_data=f"compress_send_{update.effective_user.id}")],
-            [InlineKeyboardButton("📱 جودة أقل", callback_data=f"lower_quality_{update.effective_user.id}")],
-            [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio_only_{update.effective_user.id}")],
+            [InlineKeyboardButton("📤 تقسيم وإرسال", callback_data=f"split_send_{user_id}")],
+            [InlineKeyboardButton("🗜️ ضغط وإرسال", callback_data=f"compress_send_{user_id}")],
+            [InlineKeyboardButton("📱 جودة أقل", callback_data=f"lower_quality_{user_id}")],
+            [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio_only_{user_id}")],
             [InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # حفظ معلومات الملف
-        context.user_data[f'large_file_{update.effective_user.id}'] = {
+        context.user_data[f'large_file_{user_id}'] = {
             'url': url,
             'info': video_info,
             'file_info': file_info
         }
         
-        await update.message.reply_text(warning_message, reply_markup=reply_markup)
+        await send_method(warning_message, reply_markup=reply_markup)
 
-    async def download_with_monitoring(self, update, url, video_info):
+    async def download_with_monitoring(self, update_or_query, url, video_info):
         """تحميل مع مراقبة التقدم والحجم"""
-        progress_msg = await update.message.reply_text("🚀 بدء التحميل...")
+        # التحقق من نوع الكائن
+        if hasattr(update_or_query, 'callback_query'):
+            query = update_or_query
+            user_id = query.from_user.id
+            progress_msg = await query.edit_message_text("🚀 بدء التحميل...")
+            message_obj = query.message
+        elif hasattr(update_or_query, 'effective_user'):
+            update = update_or_query
+            user_id = update.effective_user.id
+            progress_msg = await update.message.reply_text("🚀 بدء التحميل...")
+            message_obj = update.message
+        else:
+            query = update_or_query
+            user_id = query.from_user.id
+            progress_msg = await query.edit_message_text("🚀 بدء التحميل...")
+            message_obj = query.message
         
         timestamp = int(datetime.now().timestamp())
-        filename = f'downloads/large_video_{update.effective_user.id}_{timestamp}.%(ext)s'
+        filename = f'downloads/large_video_{user_id}_{timestamp}.%(ext)s'
         
         # إعدادات خاصة للملفات الكبيرة
         ydl_opts = {
@@ -155,7 +215,7 @@ class LargeFileHandler:
                 
             # البحث عن الملف المحمل
             download_dir = 'downloads'
-            files = [f for f in os.listdir(download_dir) if f.startswith(f'large_video_{update.effective_user.id}_{timestamp}')]
+            files = [f for f in os.listdir(download_dir) if f.startswith(f'large_video_{user_id}_{timestamp}')]
             
             if files:
                 file_path = os.path.join(download_dir, files[0])
@@ -163,9 +223,9 @@ class LargeFileHandler:
                 
                 if file_size_mb > self.telegram_limit_mb:
                     await progress_msg.edit_text("📤 الملف كبير، جاري التحضير للإرسال...")
-                    await self.handle_large_file_send(update, file_path, video_info, progress_msg)
+                    await self.handle_large_file_send(message_obj, file_path, video_info, progress_msg)
                 else:
-                    await self.send_normal_file(update, file_path, video_info, progress_msg)
+                    await self.send_normal_file(message_obj, file_path, video_info, progress_msg)
                 
                 # تنظيف
                 try:
@@ -226,7 +286,7 @@ class LargeFileHandler:
         bar = "█" * filled + "░" * (length - filled)
         return f"[{bar}]"
 
-    async def handle_large_file_send(self, update, file_path, video_info, progress_msg):
+    async def handle_large_file_send(self, message_obj, file_path, video_info, progress_msg):
         """معالجة إرسال الملفات الكبيرة"""
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         
@@ -241,9 +301,9 @@ class LargeFileHandler:
         if file_size_mb > self.telegram_limit_mb:
             # تقسيم الملف
             await progress_msg.edit_text("✂️ جاري تقسيم الملف...")
-            await self.split_and_send_file(update, file_path, video_info, progress_msg)
+            await self.split_and_send_file(message_obj, file_path, video_info, progress_msg)
         else:
-            await self.send_normal_file(update, file_path, video_info, progress_msg)
+            await self.send_normal_file(message_obj, file_path, video_info, progress_msg)
 
     async def compress_video(self, input_path, target_size_mb=1800):
         """ضغط الفيديو لتقليل الحجم"""
@@ -278,10 +338,10 @@ class LargeFileHandler:
             return output_path
             
         except Exception as e:
-            print(f"خطأ في الضغط: {e}")
+            logger.error(f"خطأ في الضغط: {e}")
             return input_path  # إرجاع الملف الأصلي في حالة فشل الضغط
 
-    async def split_and_send_file(self, update, file_path, video_info, progress_msg):
+    async def split_and_send_file(self, message_obj, file_path, video_info, progress_msg):
         """تقسيم وإرسال الملف"""
         file_size = os.path.getsize(file_path)
         chunk_size = self.chunk_size_mb * 1024 * 1024  # تحويل إلى بايت
@@ -312,7 +372,7 @@ class LargeFileHandler:
                     """
                     
                     with open(chunk_path, 'rb') as chunk_file:
-                        await update.message.reply_document(
+                        await message_obj.reply_document(
                             document=chunk_file,
                             filename=chunk_filename,
                             caption=caption
@@ -345,7 +405,7 @@ class LargeFileHandler:
         except Exception as e:
             await progress_msg.edit_text(f"❌ فشل في تقسيم الملف: {str(e)[:100]}...")
 
-    async def send_normal_file(self, update, file_path, video_info, progress_msg):
+    async def send_normal_file(self, message_obj, file_path, video_info, progress_msg):
         """إرسال الملف العادي"""
         file_size = os.path.getsize(file_path) / (1024 * 1024)
         
@@ -364,14 +424,14 @@ class LargeFileHandler:
         try:
             if file_path.endswith('.mp3'):
                 with open(file_path, 'rb') as audio_file:
-                    await update.message.reply_audio(
+                    await message_obj.reply_audio(
                         audio=audio_file,
                         caption=caption,
                         title=video_info['title']
                     )
             else:
                 with open(file_path, 'rb') as video_file:
-                    await update.message.reply_video(
+                    await message_obj.reply_video(
                         video=video_file,
                         caption=caption,
                         supports_streaming=True
@@ -382,7 +442,7 @@ class LargeFileHandler:
         except Exception as e:
             if "too large" in str(e).lower():
                 await progress_msg.edit_text("❌ الملف كبير جداً! جاري التقسيم...")
-                await self.split_and_send_file(update, file_path, video_info, progress_msg)
+                await self.split_and_send_file(message_obj, file_path, video_info, progress_msg)
             else:
                 await progress_msg.edit_text(f"❌ فشل الإرسال: {str(e)[:100]}...")
 
@@ -443,7 +503,7 @@ class LargeFileHandler:
                 file_path = os.path.join(download_dir, files[0])
                 video_info = file_data.get('info', {'title': 'فيديو مضغوط', 'duration': 0})
                 
-                await self.handle_large_file_send(query, file_path, video_info, progress_msg)
+                await self.handle_large_file_send(query.message, file_path, video_info, progress_msg)
                 
                 try:
                     os.remove(file_path)
