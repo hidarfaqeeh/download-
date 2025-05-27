@@ -10,16 +10,19 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python packages
+# Copy requirements and install Python packages (ensure job-queue support)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY main.py .
-COPY .env .
+
+# Optional: Copy .env if it exists (for local builds only)
+# In production, use Docker secrets or --env-file
+# COPY .env . || echo ".env not found, continuing..."
 
 # Create temp directory
 RUN mkdir -p /tmp/telegram_bot
 
-# Run the bot
+# Define default command
 CMD ["python", "main.py"]
